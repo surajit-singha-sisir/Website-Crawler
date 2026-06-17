@@ -1,0 +1,1118 @@
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Domain File Crawler — Asset Discovery Tool</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: { 400: '#818cf8', 500: '#6366f1', 600: '#4f46e5' },
+                        glass: { dark: 'rgba(15,23,42,0.7)', card: 'rgba(30,41,59,0.6)' }
+                    },
+                    backdropBlur: { glass: '12px' }
+                }
+            }
+        };
+    </script>
+
+    <!-- Font Awesome 6 CDN -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+
+    <!-- Alpine.js CDN -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+    <style>
+        [x-cloak] {
+            display: none !important;
+        }
+
+        body {
+            background: #020617;
+            color: #e2e8f0;
+            font-family: 'Inter', system-ui, sans-serif;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4f46e5;
+        }
+
+        /* Glassmorphism */
+        .glass {
+            background: rgba(15, 23, 42, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(99, 102, 241, 0.15);
+        }
+
+        .glass-card {
+            background: rgba(30, 41, 59, 0.6);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(99, 102, 241, 0.12);
+        }
+
+        /* Gradient background */
+        .bg-main {
+            background:
+                radial-gradient(ellipse at 20% 0%, rgba(79, 70, 229, 0.15) 0%, transparent 60%),
+                radial-gradient(ellipse at 80% 100%, rgba(16, 185, 129, 0.08) 0%, transparent 60%),
+                #020617;
+        }
+
+        /* Status badge */
+        .badge-idle {
+            background: #1e293b;
+            color: #94a3b8;
+        }
+
+        .badge-running {
+            background: #052e16;
+            color: #4ade80;
+        }
+
+        .badge-paused {
+            background: #422006;
+            color: #fb923c;
+        }
+
+        .badge-stopped {
+            background: #1c1917;
+            color: #a8a29e;
+        }
+
+        .badge-completed {
+            background: #042f2e;
+            color: #34d399;
+        }
+
+        /* Pulse dot */
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .pulse-dot.running {
+            background: #4ade80;
+            animation: pulse-green 1.5s infinite;
+        }
+
+        .pulse-dot.paused {
+            background: #fb923c;
+        }
+
+        .pulse-dot.stopped,
+        .pulse-dot.idle {
+            background: #64748b;
+        }
+
+        .pulse-dot.completed {
+            background: #34d399;
+        }
+
+        @keyframes pulse-green {
+
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+                box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.4);
+            }
+
+            50% {
+                opacity: .8;
+                transform: scale(1.2);
+                box-shadow: 0 0 0 6px rgba(74, 222, 128, 0);
+            }
+        }
+
+        /* Table */
+        .tbl-row {
+            transition: background 0.15s;
+        }
+
+        .tbl-row:hover {
+            background: rgba(99, 102, 241, 0.08);
+        }
+
+        /* Progress bar */
+        .progress-bar {
+            height: 4px;
+            background: rgba(99, 102, 241, 0.15);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 2px;
+            background: linear-gradient(90deg, #6366f1, #818cf8, #4ade80);
+            background-size: 200% 100%;
+            animation: progress-shimmer 2s linear infinite;
+            transition: width 0.5s ease;
+        }
+
+        @keyframes progress-shimmer {
+            0% {
+                background-position: 200% 0;
+            }
+
+            100% {
+                background-position: -200% 0;
+            }
+        }
+
+        /* Category icons */
+        .cat-video {
+            color: #f87171;
+        }
+
+        .cat-image {
+            color: #60a5fa;
+        }
+
+        .cat-audio {
+            color: #a78bfa;
+        }
+
+        .cat-document {
+            color: #fbbf24;
+        }
+
+        .cat-other {
+            color: #94a3b8;
+        }
+
+        /* Tooltip */
+        [data-tooltip] {
+            position: relative;
+            cursor: default;
+        }
+
+        [data-tooltip]:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 110%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1e293b;
+            border: 1px solid #334155;
+            color: #e2e8f0;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            white-space: nowrap;
+            z-index: 50;
+        }
+
+        /* Animations */
+        .fade-in {
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: none;
+            }
+        }
+
+        /* Preview modal */
+        .modal-overlay {
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(4px);
+        }
+
+        /* Input styles */
+        .inp {
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid rgba(99, 102, 241, 0.25);
+            color: #e2e8f0;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+            outline: none;
+        }
+
+        .inp:focus {
+            border-color: #6366f1;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+        }
+
+        .inp::placeholder {
+            color: #475569;
+        }
+
+        /* Button */
+        .btn {
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn:disabled {
+            opacity: .5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: #6366f1;
+            color: #fff;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #4f46e5;
+            transform: translateY(-1px);
+        }
+
+        .btn-danger {
+            background: #991b1b;
+            color: #fca5a5;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #7f1d1d;
+        }
+
+        .btn-warning {
+            background: #78350f;
+            color: #fcd34d;
+        }
+
+        .btn-warning:hover:not(:disabled) {
+            background: #92400e;
+        }
+
+        .btn-success {
+            background: #065f46;
+            color: #6ee7b7;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background: #047857;
+        }
+
+        .btn-ghost {
+            background: rgba(99, 102, 241, 0.1);
+            color: #818cf8;
+            border: 1px solid rgba(99, 102, 241, 0.2);
+        }
+
+        .btn-ghost:hover:not(:disabled) {
+            background: rgba(99, 102, 241, 0.2);
+        }
+    </style>
+</head>
+
+<body class="bg-main min-h-screen" x-data="app()" x-init="init()">
+
+    <!-- ============================= HEADER ============================= -->
+    <header class="glass sticky top-0 z-40 border-b border-indigo-500/10">
+        <div class="max-w-screen-2xl mx-auto px-4 py-3 flex items-center gap-4 flex-wrap">
+            <!-- Logo -->
+            <div class="flex items-center gap-2 mr-2">
+                <div class="w-9 h-9 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center
+                    justify-center">
+                    <i class="fa-solid fa-spider text-indigo-400 text-lg"></i>
+                </div>
+                <div>
+                    <div class="text-sm font-bold text-white leading-none">FileCrawler</div>
+                    <div class="text-xs text-slate-500 leading-none">Asset Discovery</div>
+                </div>
+            </div>
+
+            <!-- Domain info -->
+            <div x-show="activeSession" class="flex items-center gap-2 flex-1 min-w-0">
+                <i class="fa-solid fa-globe text-slate-500 text-xs shrink-0"></i>
+                <span class="text-xs text-slate-400 truncate max-w-xs" x-text="activeSession?.root_url"></span>
+            </div>
+
+            <!-- Status badge -->
+            <div x-show="activeSession" class="flex items-center gap-2">
+                <span class="pulse-dot" :class="activeSession?.status"></span>
+                <span class="text-xs font-semibold uppercase tracking-wider px-2 py-1 rounded-full" :class="'badge-'
+                    + (activeSession?.status || 'idle' )" x-text="activeSession?.status || 'idle' "></span>
+            </div>
+
+            <!-- Elapsed time -->
+            <div x-show="activeSession" class="text-xs text-slate-500 font-mono" x-text="elapsedTime"></div>
+
+            <!-- Controls -->
+            <div class="flex items-center gap-2 ml-auto">
+                <template x-if="activeSession">
+                    <div class="flex gap-2">
+                        <button class="btn btn-warning text-xs py-1.5 px-3" x-show="activeSession?.status==='running'
+                            " @click="pauseCrawl()">
+                            <i class="fa-solid fa-pause"></i> Pause
+                        </button>
+                        <button class="btn btn-success text-xs py-1.5 px-3" x-show="activeSession?.status==='paused'
+                            " @click="resumeCrawl()">
+                            <i class="fa-solid fa-play"></i> Resume
+                        </button>
+                        <button class="btn btn-danger text-xs py-1.5 px-3"
+                            x-show="['running','paused'].includes(activeSession?.status)" @click="stopCrawl()">
+                            <i class="fa-solid fa-stop"></i> Stop
+                        </button>
+                        <button class="btn btn-ghost text-xs py-1.5 px-3" @click="showNewCrawl=true">
+                            <i class="fa-solid fa-plus"></i> New
+                        </button>
+                    </div>
+                </template>
+                <button x-show="!activeSession" class="btn btn-primary" @click="showNewCrawl=true">
+                    <i class="fa-solid fa-plus"></i> New Crawl
+                </button>
+                <button class="btn btn-ghost text-xs py-1.5 px-3" @click="showSessions=!showSessions">
+                    <i class="fa-solid fa-history"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- ============================= NEW CRAWL MODAL ============================= -->
+    <div x-show="showNewCrawl" x-cloak class="fixed inset-0 z-50 flex items-center justify-center modal-overlay
+        fade-in" @click.self="showNewCrawl=false">
+        <div class="glass-card rounded-2xl p-6 w-full max-w-lg mx-4 shadow-2xl">
+            <div class="flex items-center justify-between mb-5">
+                <h2 class="text-base font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-spider text-indigo-400"></i> New Crawl Session
+                </h2>
+                <button @click="showNewCrawl=false" class="text-slate-500 hover:text-white text-xl
+                    leading-none">&times;</button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="text-xs text-slate-400 mb-1 block">Root URL <span
+                            class="text-red-400">*</span></label>
+                    <input x-model="crawlForm.rootUrl" type="url" placeholder="https://example.com" class="inp
+                        w-full" />
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="text-xs text-slate-400 mb-1 block">Max Depth</label>
+                        <input x-model.number="crawlForm.maxDepth" type="number" min="1" max="20" class="inp
+                            w-full" />
+                    </div>
+                    <div>
+                        <label class="text-xs text-slate-400 mb-1 block">Max Pages</label>
+                        <input x-model.number="crawlForm.maxPages" type="number" min="10" max="100000"
+                            class="inp w-full" />
+                    </div>
+                    <div>
+                        <label class="text-xs text-slate-400 mb-1 block">Concurrent Requests</label>
+                        <input x-model.number="crawlForm.maxConcurrent" type="number" min="1" max="20"
+                            class="inp w-full" />
+                    </div>
+                    <div>
+                        <label class="text-xs text-slate-400 mb-1 block">Crawl Delay (ms)</label>
+                        <input x-model.number="crawlForm.crawlDelay" type="number" min="0" max="5000"
+                            class="inp w-full" />
+                    </div>
+                    <div class="col-span-2">
+                        <label class="text-xs text-slate-400 mb-1 block">Request Timeout (ms)</label>
+                        <input x-model.number="crawlForm.requestTimeout" type="number" min="1000" max="60000"
+                            class="inp w-full" />
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 mt-6">
+                <button class="btn btn-ghost" @click="showNewCrawl=false">Cancel</button>
+                <button class="btn btn-primary" @click="startCrawl()" :disabled="!crawlForm.rootUrl">
+                    <i class="fa-solid fa-rocket"></i> Start Crawl
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================= SESSIONS PANEL ============================= -->
+    <div x-show="showSessions" x-cloak class="fixed inset-0 z-50 flex items-start justify-end modal-overlay fade-in"
+        @click.self="showSessions=false">
+        <div class="glass-card h-full w-full max-w-sm shadow-2xl flex flex-col">
+            <div class="flex items-center justify-between p-4 border-b border-slate-700/50">
+                <h2 class="font-bold text-white text-sm flex items-center gap-2"><i class="fa-solid fa-history
+                        text-indigo-400"></i> Sessions</h2>
+                <button @click="showSessions=false" class="text-slate-500 hover:text-white text-xl">&times;</button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-3 space-y-2">
+                <template x-for="s in sessions" :key="s.id">
+                    <div class="glass-card rounded-xl p-3 cursor-pointer hover:border-indigo-500/30 transition-colors"
+                        :class="activeSession?.id===s.id ? 'border-indigo-500/50' : '' " @click="loadSession(s.id);
+                        showSessions=false;">
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="text-xs font-mono text-indigo-400">#<span x-text="s.id"></span></span>
+                            <span class="text-xs px-1.5 py-0.5 rounded-full" :class="'badge-'+s.status"
+                                x-text="s.status"></span>
+                        </div>
+                        <div class="text-xs text-slate-300 truncate" x-text="s.root_url"></div>
+                        <div class="flex items-center gap-3 mt-1.5 text-xs text-slate-500">
+                            <span><i class="fa-solid fa-file mr-1"></i><span x-text="s.files_found"></span></span>
+                            <span><i class="fa-solid fa-link mr-1"></i><span x-text="s.pages_crawled"></span></span>
+                        </div>
+                        <div class="flex items-center justify-between mt-2">
+                            <span class="text-xs text-slate-600" x-text="new
+                                Date(s.created_at).toLocaleString()"></span>
+                            <button class="text-red-500 hover:text-red-400 text-xs"
+                                @click.stop="deleteSession(s.id)">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                </template>
+                <div x-show="sessions.length===0" class="text-center text-slate-600 py-8 text-sm">No sessions yet
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================= MAIN CONTENT ============================= -->
+    <main class="max-w-screen-2xl mx-auto px-4 py-6 space-y-6">
+
+        <!-- Welcome / Empty State -->
+        <div x-show="!activeSession" class="text-center py-20 fade-in">
+            <div class="w-20 h-20 rounded-3xl bg-indigo-600/15 border border-indigo-500/20 flex items-center
+                justify-center mx-auto mb-6">
+                <i class="fa-solid fa-spider text-indigo-400 text-3xl"></i>
+            </div>
+            <h1 class="text-2xl font-bold text-white mb-2">Domain File Crawler</h1>
+            <p class="text-slate-500 mb-6 max-w-md mx-auto">Discover publicly accessible files and assets across any
+                domain. Start by entering a URL above.</p>
+            <button class="btn btn-primary" @click="showNewCrawl=true">
+                <i class="fa-solid fa-rocket"></i> Start Your First Crawl
+            </button>
+        </div>
+
+        <!-- Dashboard -->
+        <div x-show="activeSession" x-cloak class="space-y-5">
+
+            <!-- Progress bar -->
+            <div x-show="activeSession?.status==='running' ">
+                <div class="progress-bar">
+                    <div class="progress-fill"
+                        :style="`width:${Math.min(100,(activeSession?.pages_crawled/activeSession?.max_pages)*100)}%`">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stats cards -->
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                <template x-for="card in statsCards" :key="card.label">
+                    <div class="glass-card rounded-xl p-4 fade-in">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i :class="[card.icon, card.color, 'text-sm' ]"></i>
+                            <span class="text-xs text-slate-500" x-text="card.label"></span>
+                        </div>
+                        <div class="text-xl font-bold text-white" x-text="card.value"></div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Filters & Results -->
+            <div class="glass-card rounded-2xl overflow-hidden">
+                <!-- Filter bar -->
+                <div class="p-4 border-b border-slate-700/50 flex flex-wrap gap-3 items-center">
+                    <!-- Category tabs -->
+                    <div class="flex gap-1 flex-wrap">
+                        <template x-for="cat in ['all','video','image','audio','document']" :key="cat">
+                            <button class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                                :class="filters.category===cat ? 'bg-indigo-600 text-white'
+                                : 'bg-slate-800/60 text-slate-400 hover:bg-slate-700/60' "
+                                @click="filters.category=cat; filters.page=1; loadFiles()">
+                                <i :class="categoryIcon(cat)" class="mr-1"></i>
+                                <span x-text="cat.charAt(0).toUpperCase()+cat.slice(1)"></span>
+                                <span class="ml-1 text-xs opacity-70" x-text="categoryCounts[cat] ? '('
+                                    +categoryCounts[cat]+')' : '' "></span>
+                            </button>
+                        </template>
+                    </div>
+
+                    <div class="flex-1 min-w-0"></div>
+
+                    <!-- Search -->
+                    <div class="relative">
+                        <i class="fa-solid fa-search text-slate-500 absolute left-3 top-1/2 -translate-y-1/2
+                            text-xs"></i>
+                        <input x-model="filters.search" @input.debounce.400ms="filters.page=1; loadFiles()"
+                            type="text" placeholder="Search URL or filename…" class="inp pl-8 w-48 text-xs
+                            py-2" />
+                    </div>
+
+                    <!-- Extension -->
+                    <input x-model="filters.extension" @input.debounce.400ms="filters.page=1; loadFiles()"
+                        type="text" placeholder="ext: mp4, jpg…" class="inp w-28 text-xs py-2" />
+
+                    <!-- MIME -->
+                    <input x-model="filters.mime" @input.debounce.400ms="filters.page=1; loadFiles()" type="text"
+                        placeholder="mime…" class="inp w-32 text-xs py-2" />
+
+                    <!-- Size filter -->
+                    <select x-model="filters.sizeRange" @change="applySizeFilter()" class="inp text-xs py-2">
+                        <option value="">All Sizes</option>
+                        <option value="0-1048576">
+                            < 1 MB</option>
+                        <option value="1048576-10485760">1–10 MB</option>
+                        <option value="10485760-104857600">10–100 MB</option>
+                        <option value="104857600-">100 MB+</option>
+                    </select>
+
+                    <!-- Sort -->
+                    <select x-model="filters.sortBy" @change="loadFiles()" class="inp text-xs py-2">
+                        <option value="discovered_at">Newest First</option>
+                        <option value="file_name">Filename</option>
+                        <option value="content_length">Size</option>
+                        <option value="category">Category</option>
+                        <option value="extension">Extension</option>
+                    </select>
+
+                    <!-- Export -->
+                    <div class="relative" x-data="{open:false}">
+                        <button class="btn btn-ghost text-xs py-1.5" @click="open=!open">
+                            <i class="fa-solid fa-download"></i> Export
+                        </button>
+                        <div x-show="open" @click.outside="open=false" class="absolute right-0 top-full mt-1 glass
+                            rounded-xl p-1 w-36 z-20">
+                            <button class="block w-full text-left px-3 py-2 text-xs hover:bg-slate-700/50 rounded-lg"
+                                @click="exportFiles('json'); open=false"><i class="fa-brands fa-js mr-2
+                                    text-yellow-400"></i>JSON</button>
+                            <button class="block w-full text-left px-3 py-2 text-xs hover:bg-slate-700/50 rounded-lg"
+                                @click="exportFiles('csv'); open=false"><i class="fa-solid fa-file-csv mr-2
+                                    text-green-400"></i>CSV</button>
+                            <button class="block w-full text-left px-3 py-2 text-xs hover:bg-slate-700/50 rounded-lg"
+                                @click="exportFiles('excel'); open=false"><i class="fa-solid fa-file-excel mr-2
+                                    text-emerald-400"></i>Excel</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Table -->
+                <div class="overflow-x-auto">
+                    <table class="w-full text-xs">
+                        <thead>
+                            <tr class="border-b border-slate-700/50 text-slate-500 text-left">
+                                <th class="px-4 py-3 w-8">#</th>
+                                <th class="px-4 py-3">File / URL</th>
+                                <th class="px-4 py-3 w-24">Category</th>
+                                <th class="px-4 py-3 w-16">Ext</th>
+                                <th class="px-4 py-3 w-32">MIME</th>
+                                <th class="px-4 py-3 w-24">Size</th>
+                                <th class="px-4 py-3 w-20">Status</th>
+                                <th class="px-4 py-3 w-24">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="(file, idx) in files" :key="file.id">
+                                <tr class="tbl-row border-b border-slate-800/60 fade-in">
+                                    <td class="px-4 py-3 text-slate-600 font-mono"
+                                        x-text="(filters.page-1)*filters.limit + idx + 1"></td>
+                                    <td class="px-4 py-3 max-w-xs">
+                                        <div class="font-medium text-slate-200 truncate" x-text="file.file_name
+                                            || '—' "></div>
+                                        <div class="text-slate-600 truncate mt-0.5 max-w-sm" x-text="file.url">
+                                        </div>
+                                    </td>
+                                    <td class="px-4 py-3">
+                                        <span class="flex items-center gap-1.5">
+                                            <i :class="[categoryIcon(file.category), 'cat-' +file.category]"></i>
+                                            <span class="capitalize text-slate-300" x-text="file.category"></span>
+                                        </span>
+                                    </td>
+                                    <td class="px-4 py-3">
+                                        <span class="font-mono bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded
+                                            text-xs" x-text="file.extension || '—' "></span>
+                                    </td>
+                                    <td class="px-4 py-3 text-slate-400 truncate max-w-[120px]"
+                                        x-text="file.mime_type || '—' "></td>
+                                    <td class="px-4 py-3 text-slate-400 font-mono"
+                                        x-text="formatSize(file.content_length)"></td>
+                                    <td class="px-4 py-3">
+                                        <span class="px-1.5 py-0.5 rounded text-xs font-mono"
+                                            :class="file.status_code>= 200 && file.status_code < 300
+                                                ? 'bg-emerald-900/40 text-emerald-400' : 'bg-red-900/40 text-red-400' "
+                                                x-text="file.status_code || '—' "></span>
+                                    </td>
+                                    <td class="px-4 py-3">
+                                        <div class="flex items-center gap-1">
+                                            <button class="w-7 h-7 rounded-lg bg-slate-800 hover:bg-indigo-600/30 flex
+                                                items-center justify-center transition-colors" data-tooltip="Preview"
+                                                @click="previewFile(file)">
+                                                <i class="fa-solid fa-eye text-slate-400 text-xs"></i>
+                                            </button>
+                                            <button class="w-7 h-7 rounded-lg bg-slate-800 hover:bg-indigo-600/30 flex
+                                                items-center justify-center transition-colors" data-tooltip="Copy
+                                                URL" @click="copyUrl(file.url)">
+                                                <i class="fa-solid fa-copy text-slate-400 text-xs"></i>
+                                            </button>
+                                            <a :href="file.url" target="_blank" rel="noopener" class="w-7 h-7
+                                                rounded-lg bg-slate-800 hover:bg-indigo-600/30 flex items-center
+                                                justify-center transition-colors" data-tooltip="Open">
+                                                <i class="fa-solid fa-arrow-up-right-from-square text-slate-400
+                                                    text-xs"></i>
+                                            </a>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
+                            <!-- Empty -->
+                            <tr x-show="files.length===0 && !loading">
+                                <td colspan="8" class="text-center py-12 text-slate-600">
+                                    <i class="fa-solid fa-magnifying-glass text-2xl mb-3 block opacity-30"></i>
+                                    No files found
+                                </td>
+                            </tr>
+                            <!-- Loading -->
+                            <tr x-show="loading">
+                                <td colspan="8" class="text-center py-8 text-slate-600">
+                                    <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Loading…
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="flex items-center justify-between px-4 py-3 border-t border-slate-700/50">
+                    <span class="text-xs text-slate-500">
+                        Showing <span x-text="(filters.page-1)*filters.limit+1"></span>–<span
+                            x-text="Math.min(filters.page*filters.limit,totalFiles)"></span> of <span
+                            x-text="totalFiles"></span> files
+                    </span>
+                    <div class="flex items-center gap-1">
+                        <button class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center
+                            justify-center text-sm disabled:opacity-40" :disabled="filters.page <=1"
+                            @click="filters.page--; loadFiles()">
+                            <i class="fa-solid fa-chevron-left text-xs"></i>
+                        </button>
+                        <template x-for="p in pageRange" :key="p">
+                            <button class="w-8 h-8 rounded-lg text-xs font-medium transition-colors"
+                                :class="filters.page===p ? 'bg-indigo-600 text-white'
+                                : 'bg-slate-800 hover:bg-slate-700 text-slate-400' " @click="filters.page=p;
+                                loadFiles()" x-text="p"></button>
+                        </template>
+                        <button class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center
+                            justify-center text-sm disabled:opacity-40" :disabled="filters.page>= totalPages"
+                            @click="filters.page++; loadFiles()">
+                            <i class="fa-solid fa-chevron-right text-xs"></i>
+                        </button>
+                    </div>
+                    <select x-model.number="filters.limit" @change="filters.page=1; loadFiles()" class="inp text-xs
+                        py-1.5 w-20">
+                        <option :value="25">25</option>
+                        <option :value="50">50</option>
+                        <option :value="100">100</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- ============================= PREVIEW MODAL ============================= -->
+    <div x-show="preview.show" x-cloak class="fixed inset-0 z-50 flex items-center justify-center modal-overlay
+        fade-in" @click.self="preview.show=false">
+        <div class="glass-card rounded-2xl p-5 w-full max-w-2xl mx-4 shadow-2xl">
+            <div class="flex items-center justify-between mb-4">
+                <div class="min-w-0">
+                    <h3 class="font-bold text-sm text-white truncate" x-text="preview.file?.file_name"></h3>
+                    <p class="text-xs text-slate-500 truncate" x-text="preview.file?.url"></p>
+                </div>
+                <button @click="preview.show=false" class="text-slate-500 hover:text-white text-2xl ml-4
+                    leading-none">&times;</button>
+            </div>
+
+            <!-- Image -->
+            <div x-show="preview.file?.category==='image' " class="flex justify-center">
+                <img :src="preview.file?.url" class="max-w-full max-h-96 object-contain rounded-xl"
+                    @error="$el.src='data:image/svg+xml,<svg xmlns=' http://www.w3.org/2000/svg' width='200'
+                    height='100'><text y='55' x='100' text-anchor='middle' fill='%23475569'
+                    font-size='14'>Image unavailable</text></svg>'" />
+            </div>
+
+            <!-- Video -->
+            <div x-show="preview.file?.category==='video' " class="flex justify-center">
+                <video :src="preview.file?.url" controls class="max-w-full max-h-72 rounded-xl w-full">
+                    Your browser does not support the video tag.
+                </video>
+            </div>
+
+            <!-- Audio -->
+            <div x-show="preview.file?.category==='audio' " class="py-4">
+                <audio :src="preview.file?.url" controls class="w-full">
+                    Your browser does not support audio.
+                </audio>
+            </div>
+
+            <!-- Document -->
+            <div x-show="preview.file?.category==='document' " class="text-center py-8">
+                <i class="fa-solid fa-file-lines text-4xl text-yellow-400 mb-3"></i>
+                <p class="text-sm text-slate-400 mb-4">Preview not available for documents</p>
+                <a :href="preview.file?.url" target="_blank" class="btn btn-primary text-xs">
+                    <i class="fa-solid fa-external-link-alt"></i> Open in New Tab
+                </a>
+            </div>
+
+            <!-- Metadata -->
+            <div class="mt-4 grid grid-cols-2 gap-2 text-xs">
+                <div class="glass rounded-lg p-2.5">
+                    <span class="text-slate-500">Category</span>
+                    <div class="text-slate-200 font-medium capitalize" x-text="preview.file?.category"></div>
+                </div>
+                <div class="glass rounded-lg p-2.5">
+                    <span class="text-slate-500">Extension</span>
+                    <div class="text-slate-200 font-mono" x-text="preview.file?.extension || '—' "></div>
+                </div>
+                <div class="glass rounded-lg p-2.5">
+                    <span class="text-slate-500">MIME Type</span>
+                    <div class="text-slate-200" x-text="preview.file?.mime_type || '—' "></div>
+                </div>
+                <div class="glass rounded-lg p-2.5">
+                    <span class="text-slate-500">Size</span>
+                    <div class="text-slate-200 font-mono" x-text="formatSize(preview.file?.content_length)"></div>
+                </div>
+                <div class="glass rounded-lg p-2.5 col-span-2">
+                    <span class="text-slate-500">Source Page</span>
+                    <div class="text-slate-200 truncate" x-text="preview.file?.source_page || '—' "></div>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-2 mt-4">
+                <button class="btn btn-ghost text-xs" @click="copyUrl(preview.file?.url)"><i class="fa-solid
+                        fa-copy"></i> Copy URL</button>
+                <a :href="preview.file?.url" target="_blank" class="btn btn-primary text-xs"><i class="fa-solid
+                        fa-arrow-up-right-from-square"></i> Open</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================= TOAST ============================= -->
+    <div x-show="toast.show" x-cloak class="fixed bottom-5 right-5 z-50 fade-in">
+        <div class="glass rounded-xl px-4 py-3 flex items-center gap-3 text-sm" :class="toast.type==='success'
+            ? 'border-emerald-500/30' : 'border-red-500/30' ">
+            <i :class="toast.type==='success' ? 'fa-solid fa-check text-emerald-400' : 'fa-solid fa-xmark text-red-400'
+                "></i>
+            <span x-text="toast.msg" class="text-slate-200"></span>
+        </div>
+    </div>
+
+    <!-- ============================= ALPINE.JS APP ============================= -->
+    <script>
+        function app() {
+            return {
+                // State
+                showNewCrawl: false,
+                showSessions: false,
+                activeSession: null,
+                sessions: [],
+                files: [],
+                totalFiles: 0,
+                loading: false,
+                categoryCounts: {},
+                elapsedTimer: null,
+                elapsedTime: '00:00:00',
+                sseSource: null,
+
+                // Filters
+                filters: {
+                    category: 'all',
+                    extension: '',
+                    mime: '',
+                    search: '',
+                    sizeRange: '',
+                    minSize: null,
+                    maxSize: null,
+                    sortBy: 'discovered_at',
+                    sortDir: 'DESC',
+                    page: 1,
+                    limit: 50,
+                },
+
+                // New crawl form
+                crawlForm: {
+                    rootUrl: '',
+                    maxDepth: 3,
+                    maxPages: 500,
+                    maxConcurrent: 5,
+                    crawlDelay: 300,
+                    requestTimeout: 10000,
+                },
+
+                // Preview
+                preview: { show: false, file: null },
+
+                // Toast
+                toast: { show: false, msg: '', type: 'success', timer: null },
+
+                // --------------------------------------------------------
+                init() {
+                    this.loadSessions();
+                },
+
+                get statsCards() {
+                    const s = this.activeSession;
+                    if (!s) return [];
+                    return [
+                        { label: 'Pages Crawled', value: s.pages_crawled || 0, icon: 'fa-solid fa-globe', color: 'text-indigo-400' },
+                        { label: 'URLs Queued', value: s.urls_queued || 0, icon: 'fa-solid fa-list', color: 'text-blue-400' },
+                        { label: 'URLs Visited', value: s.urls_visited || 0, icon: 'fa-solid fa-check-circle', color: 'text-teal-400' },
+                        { label: 'Files Found', value: s.files_found || 0, icon: 'fa-solid fa-file', color: 'text-yellow-400' },
+                        { label: 'Crawl Speed', value: (s.crawl_speed || 0) + '/s', icon: 'fa-solid fa-bolt', color: 'text-orange-400' },
+                        { label: 'Active Req', value: s.activeRequests || 0, icon: 'fa-solid fa-spinner', color: 'text-pink-400' },
+                    ];
+                },
+
+                get totalPages() {
+                    return Math.max(1, Math.ceil(this.totalFiles / this.filters.limit));
+                },
+
+                get pageRange() {
+                    const cur = this.filters.page;
+                    const total = this.totalPages;
+                    const range = [];
+                    for (let i = Math.max(1, cur - 2); i <= Math.min(total, cur + 2); i++) range.push(i);
+                    return range;
+                },
+
+                // --------------------------------------------------------
+                async startCrawl() {
+                    if (!this.crawlForm.rootUrl) return;
+                    try {
+                        const res = await fetch('/api/sessions', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.crawlForm),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) { this.showToast(data.error || 'Failed to start', 'error'); return; }
+                        this.showNewCrawl = false;
+                        this.showToast('Crawl started!', 'success');
+                        await this.loadSession(data.sessionId);
+                        this.loadSessions();
+                        this.subscribeSSE(data.sessionId);
+                        this.startElapsedTimer();
+                    } catch (e) {
+                        this.showToast('Network error', 'error');
+                    }
+                },
+
+                async loadSessions() {
+                    const res = await fetch('/api/sessions');
+                    this.sessions = await res.json();
+                },
+
+                async loadSession(id) {
+                    const res = await fetch(`/api/sessions/${id}`);
+                    if (!res.ok) return;
+                    this.activeSession = await res.json();
+                    this.filters.page = 1;
+                    await this.loadFiles();
+                    await this.loadCategoryCounts();
+                    if (this.activeSession.status === 'running') {
+                        this.subscribeSSE(id);
+                        this.startElapsedTimer();
+                    }
+                },
+
+                async loadFiles() {
+                    if (!this.activeSession) return;
+                    this.loading = true;
+                    try {
+                        const params = new URLSearchParams({
+                            category: this.filters.category,
+                            extension: this.filters.extension,
+                            mime: this.filters.mime,
+                            search: this.filters.search,
+                            sortBy: this.filters.sortBy,
+                            sortDir: this.filters.sortDir,
+                            page: this.filters.page,
+                            limit: this.filters.limit,
+                        });
+                        if (this.filters.minSize) params.set('minSize', this.filters.minSize);
+                        if (this.filters.maxSize) params.set('maxSize', this.filters.maxSize);
+                        const res = await fetch(`/api/sessions/${this.activeSession.id}/files?${params}`);
+                        const data = await res.json();
+                        this.files = data.files;
+                        this.totalFiles = data.total;
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async loadCategoryCounts() {
+                    if (!this.activeSession) return;
+                    const res = await fetch(`/api/sessions/${this.activeSession.id}/stats`);
+                    const rows = await res.json();
+                    const counts = { all: 0 };
+                    for (const row of rows) {
+                        counts[row.category] = (counts[row.category] || 0) + row.count;
+                        counts.all += row.count;
+                    }
+                    this.categoryCounts = counts;
+                },
+
+                subscribeSSE(sessionId) {
+                    if (this.sseSource) this.sseSource.close();
+                    this.sseSource = new EventSource(`/api/sessions/${sessionId}/events`);
+                    this.sseSource.onmessage = (e) => {
+                        const data = JSON.parse(e.data);
+                        if (data.type === 'stats' && data.session) {
+                            this.activeSession = { ...this.activeSession, ...data.session };
+                            // Reload files periodically
+                            if (this.activeSession.status === 'running') {
+                                this.loadFiles();
+                                this.loadCategoryCounts();
+                            }
+                        }
+                        if (data.type === 'status') {
+                            if (this.activeSession) this.activeSession.status = data.status;
+                            if (['completed', 'stopped'].includes(data.status)) {
+                                this.loadFiles();
+                                this.loadCategoryCounts();
+                                this.stopElapsedTimer();
+                                this.loadSessions();
+                            }
+                        }
+                    };
+                    this.sseSource.onerror = () => { if (this.sseSource) this.sseSource.close(); };
+                },
+
+                startElapsedTimer() {
+                    this.stopElapsedTimer();
+                    const start = Date.now();
+                    this.elapsedTimer = setInterval(() => {
+                        const secs = Math.floor((Date.now() - start) / 1000);
+                        const h = String(Math.floor(secs / 3600)).padStart(2, '0');
+                        const m = String(Math.floor((secs % 3600) / 60)).padStart(2, '0');
+                        const s = String(secs % 60).padStart(2, '0');
+                        this.elapsedTime = `${h}:${m}:${s}`;
+                    }, 1000);
+                },
+
+                stopElapsedTimer() {
+                    if (this.elapsedTimer) clearInterval(this.elapsedTimer);
+                },
+
+                async pauseCrawl() {
+                    await fetch(`/api/sessions/${this.activeSession.id}/pause`, { method: 'POST' });
+                    this.showToast('Crawl paused', 'success');
+                },
+
+                async resumeCrawl() {
+                    await fetch(`/api/sessions/${this.activeSession.id}/resume`, { method: 'POST' });
+                    this.showToast('Crawl resumed', 'success');
+                },
+
+                async stopCrawl() {
+                    if (!confirm('Stop this crawl session?')) return;
+                    await fetch(`/api/sessions/${this.activeSession.id}/stop`, { method: 'POST' });
+                    this.stopElapsedTimer();
+                    this.showToast('Crawl stopped', 'success');
+                },
+
+                async deleteSession(id) {
+                    if (!confirm('Delete this session and all its data?')) return;
+                    await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+                    if (this.activeSession?.id === id) { this.activeSession = null; this.files = []; }
+                    this.loadSessions();
+                    this.showToast('Session deleted', 'success');
+                },
+
+                applySizeFilter() {
+                    const v = this.filters.sizeRange;
+                    if (!v) { this.filters.minSize = null; this.filters.maxSize = null; }
+                    else {
+                        const [mn, mx] = v.split('-');
+                        this.filters.minSize = mn ? parseInt(mn) : null;
+                        this.filters.maxSize = mx ? parseInt(mx) : null;
+                    }
+                    this.filters.page = 1;
+                    this.loadFiles();
+                },
+
+                exportFiles(format) {
+                    if (!this.activeSession) return;
+                    const url = `/api/sessions/${this.activeSession.id}/export?format=${format}&category=${this.filters.category}`;
+                    window.open(url, '_blank');
+                },
+
+                previewFile(file) {
+                    this.preview.file = file;
+                    this.preview.show = true;
+                },
+
+                async copyUrl(url) {
+                    if (!url) return;
+                    try {
+                        await navigator.clipboard.writeText(url);
+                        this.showToast('URL copied!', 'success');
+                    } catch {
+                        this.showToast('Copy failed', 'error');
+                    }
+                },
+
+                categoryIcon(cat) {
+                    const icons = {
+                        all: 'fa-solid fa-layer-group',
+                        video: 'fa-solid fa-film',
+                        image: 'fa-solid fa-image',
+                        audio: 'fa-solid fa-music',
+                        document: 'fa-solid fa-file-lines',
+                        other: 'fa-solid fa-file',
+                    };
+                    return icons[cat] || icons.other;
+                },
+
+                formatSize(bytes) {
+                    if (!bytes) return '—';
+                    if (bytes < 1024) return bytes + ' B';
+                    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+                    if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
+                    return (bytes / 1073741824).toFixed(2) + ' GB';
+                },
+
+                showToast(msg, type = 'success') {
+                    if (this.toast.timer) clearTimeout(this.toast.timer);
+                    this.toast = { show: true, msg, type };
+                    this.toast.timer = setTimeout(() => { this.toast.show = false; }, 3000);
+                },
+            };
+        }
+    </script>
+
+</body>
+
+</html>

@@ -3,7 +3,16 @@ const cheerio = require('cheerio');
 const { parseStringPromise } = require('xml2js');
 const mime = require('mime-types');
 const { getDb } = require('./database');
-const { isFileUrl, getExtension, getCategory, getFileName } = require('./fileTypes');
+const { isFileUrl, getExtension, getCategory, getFileName, ALL_EXTENSIONS } = require('./fileTypes');
+
+// Regex that finds absolute file-looking URLs anywhere in raw page text —
+// not just inside tag attributes. This is what catches images/video/docs that
+// are embedded in inline <script> JSON state blobs (very common on modern
+// SPA-rendered sites like Taobao, where the real product image URLs live in
+// a JSON object the framework hydrates from, not in <img src="..."> at all).
+const FILE_EXT_PATTERN = [...ALL_EXTENSIONS].join('|');
+const ABS_FILE_URL_REGEX = new RegExp(`https?:\\/\\/[^\\s"'<>\\\\]+\\.(?:${FILE_EXT_PATTERN})[^\\s"'<>\\\\]*`, 'gi');
+const REL_FILE_URL_REGEX = new RegExp(`\\/\\/[a-z0-9.-]+\\.[a-z]{2,}\\/[^\\s"'<>\\\\]+\\.(?:${FILE_EXT_PATTERN})[^\\s"'<>\\\\]*`, 'gi');
 
 // In-memory crawl state per session
 const crawlStates = new Map();
@@ -49,13 +58,19 @@ function normalizeUrl(url, base) {
   }
 }
 
-function isSameDomain(url, rootHostname) {
+function isSameDomain(url, rootHostname, includeSubdomains = true) {
   try {
     const hostname = new URL(url).hostname;
-    if (hostname === rootHostname) return true;
-    // Also match www <-> non-www variants
     const stripWww = h => h.replace(/^www\./, '');
-    return stripWww(hostname) === stripWww(rootHostname);
+    const root = stripWww(rootHostname);
+    if (hostname === rootHostname || stripWww(hostname) === root) return true;
+    // Optionally treat any subdomain of the root (e.g. item.taobao.com,
+    // m.taobao.com) as "same domain" for the purpose of following page links.
+    // Most real content (product detail pages, image galleries, etc.) lives
+    // on subdomains rather than the bare root, so without this a crawl can
+    // complete "successfully" while finding almost nothing.
+    if (includeSubdomains && hostname.endsWith('.' + root)) return true;
+    return false;
   } catch {
     return false;
   }
@@ -144,6 +159,35 @@ function extractLinks(html, baseUrl) {
       }
     });
   }
+
+  // Also catch any data-* lazy-load attributes (data-src, data-original,
+  // data-lazy, data-ks-lazyload, etc.) — many sites swap the real src in via
+  // JS after a placeholder, so the actual asset URL only ever appears here.
+  $('[data-src], [data-original], [data-lazy], [data-lazy-src]').each((_, el) => {
+    for (const a of ['data-src', 'data-original', 'data-lazy', 'data-lazy-src']) {
+      const val = $(el).attr(a);
+      if (val) {
+        const norm = normalizeUrl(val, baseUrl);
+        if (norm) links.add(norm);
+      }
+    }
+  });
+
+  // Scan the *raw* HTML text for file-looking URLs, not just tag attributes.
+  // SPA-rendered pages frequently embed the real content (product images,
+  // video URLs, etc.) inside inline <script> JSON state blobs rather than in
+  // any HTML attribute at all — cheerio's tag/attr walk above never sees
+  // those. This regex pass catches them regardless of where in the markup
+  // they sit.
+  for (const m of html.match(ABS_FILE_URL_REGEX) || []) {
+    const norm = normalizeUrl(m, baseUrl);
+    if (norm) links.add(norm);
+  }
+  for (const m of html.match(REL_FILE_URL_REGEX) || []) {
+    const norm = normalizeUrl(m, baseUrl);
+    if (norm) links.add(norm);
+  }
+
   return [...links];
 }
 

@@ -869,10 +869,17 @@
                     maxConcurrent: 5,
                     crawlDelay: 300,
                     requestTimeout: 10000,
+                    includeSubdomains: true,
                 },
 
                 // Preview
                 preview: { show: false, file: null },
+
+                // URL Explorer (Pages Crawled / URLs Queued / URLs Visited modal)
+                urlExplorer: { show: false, type: 'queued', title: '', items: [], total: 0, page: 1, limit: 50, search: '', loading: false },
+
+                // Files discovered on a specific page (drill-down from URL Explorer)
+                filesOnPage: { show: false, pageUrl: '', files: [], loading: false },
 
                 // Toast
                 toast: { show: false, msg: '', type: 'success', timer: null },
@@ -886,12 +893,12 @@
                     const s = this.activeSession;
                     if (!s) return [];
                     return [
-                        { label: 'Pages Crawled', value: s.pages_crawled || 0, icon: 'fa-solid fa-globe', color: 'text-indigo-400' },
-                        { label: 'URLs Queued', value: s.urls_queued || 0, icon: 'fa-solid fa-list', color: 'text-blue-400' },
-                        { label: 'URLs Visited', value: s.urls_visited || 0, icon: 'fa-solid fa-check-circle', color: 'text-teal-400' },
-                        { label: 'Files Found', value: s.files_found || 0, icon: 'fa-solid fa-file', color: 'text-yellow-400' },
-                        { label: 'Crawl Speed', value: (s.crawl_speed || 0) + '/s', icon: 'fa-solid fa-bolt', color: 'text-orange-400' },
-                        { label: 'Active Req', value: s.activeRequests || 0, icon: 'fa-solid fa-spinner', color: 'text-pink-400' },
+                        { label: 'Pages Crawled', value: s.pages_crawled || 0, icon: 'fa-solid fa-globe', color: 'text-indigo-400', type: 'crawled' },
+                        { label: 'URLs Queued', value: s.urls_queued || 0, icon: 'fa-solid fa-list', color: 'text-blue-400', type: 'queued' },
+                        { label: 'URLs Visited', value: s.urls_visited || 0, icon: 'fa-solid fa-check-circle', color: 'text-teal-400', type: 'visited' },
+                        { label: 'Files Found', value: s.files_found || 0, icon: 'fa-solid fa-file', color: 'text-yellow-400', type: null },
+                        { label: 'Crawl Speed', value: (s.crawl_speed || 0) + '/s', icon: 'fa-solid fa-bolt', color: 'text-orange-400', type: null },
+                        { label: 'Active Req', value: s.activeRequests || 0, icon: 'fa-solid fa-spinner', color: 'text-pink-400', type: null },
                     ];
                 },
 
@@ -902,6 +909,18 @@
                 get pageRange() {
                     const cur = this.filters.page;
                     const total = this.totalPages;
+                    const range = [];
+                    for (let i = Math.max(1, cur - 2); i <= Math.min(total, cur + 2); i++) range.push(i);
+                    return range;
+                },
+
+                get urlExplorerTotalPages() {
+                    return Math.max(1, Math.ceil(this.urlExplorer.total / this.urlExplorer.limit));
+                },
+
+                get urlExplorerPageRange() {
+                    const cur = this.urlExplorer.page;
+                    const total = this.urlExplorerTotalPages;
                     const range = [];
                     for (let i = Math.max(1, cur - 2); i <= Math.min(total, cur + 2); i++) range.push(i);
                     return range;

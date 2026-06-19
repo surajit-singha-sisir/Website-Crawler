@@ -236,7 +236,7 @@ function updateSessionStats(state) {
   );
 }
 
-async function processUrl(url, depth, state) {
+async function processUrl(url, depth, state, sourcePage) {
   if (state.isStopped) return;
   while (state.isPaused) {
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -261,7 +261,7 @@ async function processUrl(url, depth, state) {
         INSERT OR IGNORE INTO discovered_files
         (session_id, url, file_name, category, extension, mime_type, content_length, source_page, status_code)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(state.sessionId, url, getFileName(url), category, ext, resolvedMime, contentLength, depth > 0 ? url : null, statusCode);
+      `).run(state.sessionId, url, getFileName(url), category, ext, resolvedMime, contentLength, sourcePage || null, statusCode);
 
       state.filesFound++;
       db.prepare(`UPDATE crawled_urls SET status='file', status_code=?, crawled_at=CURRENT_TIMESTAMP WHERE session_id=? AND url=?`)
@@ -291,7 +291,7 @@ async function processUrl(url, depth, state) {
       if (ext) {
         const category = getCategory(ext);
         db.prepare(`INSERT OR IGNORE INTO discovered_files (session_id, url, file_name, category, extension, mime_type, content_length, source_page, status_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(state.sessionId, url, getFileName(url), category, ext, contentType.split(';')[0].trim(), null, null, res.status);
+          .run(state.sessionId, url, getFileName(url), category, ext, contentType.split(';')[0].trim(), null, sourcePage || null, res.status);
         state.filesFound++;
       }
       updateSessionStats(state);
@@ -308,13 +308,13 @@ async function processUrl(url, depth, state) {
         // Only restrict *page* crawling to the root domain; let file URLs through
         // regardless of host so they actually get discovered.
         const linkIsFile = isFileUrl(link);
-        if (!linkIsFile && !isSameDomain(link, rootHostname)) continue;
+        if (!linkIsFile && !isSameDomain(link, rootHostname, state.config.includeSubdomains)) continue;
         if (state.visitedUrls.has(link) || state.queuedUrls.has(link)) continue;
 
         state.queuedUrls.add(link);
         db.prepare(`INSERT OR IGNORE INTO crawled_urls (session_id, url, depth, source_page) VALUES (?, ?, ?, ?)`)
           .run(state.sessionId, link, depth + 1, url);
-        state.queue.push({ url: link, depth: depth + 1 });
+        state.queue.push({ url: link, depth: depth + 1, sourcePage: url });
       }
     }
 
@@ -349,9 +349,9 @@ async function runCrawler(sessionId) {
   for (const smUrl of sitemapUrls) {
     const urls = await parseSitemap(smUrl, state.config.requestTimeout);
     for (const u of urls) {
-      if (isSameDomain(u, rootHostname) && !state.queuedUrls.has(u)) {
+      if (isSameDomain(u, rootHostname, state.config.includeSubdomains) && !state.queuedUrls.has(u)) {
         state.queuedUrls.add(u);
-        state.queue.push({ url: u, depth: 0 });
+        state.queue.push({ url: u, depth: 0, sourcePage: 'sitemap' });
         db.prepare(`INSERT OR IGNORE INTO crawled_urls (session_id, url, depth, source_page) VALUES (?, ?, ?, ?)`)
           .run(sessionId, u, 0, 'sitemap');
       }
@@ -371,7 +371,7 @@ async function runCrawler(sessionId) {
       const item = state.queue.shift();
       if (!item || state.visitedUrls.has(item.url)) continue;
 
-      const promise = processUrl(item.url, item.depth, state).finally(() => {
+      const promise = processUrl(item.url, item.depth, state, item.sourcePage).finally(() => {
         inFlight.delete(promise);
       });
       inFlight.add(promise);

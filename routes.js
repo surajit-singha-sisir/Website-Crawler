@@ -27,6 +27,7 @@ router.post('/sessions', (req, res) => {
     requestTimeout = 10000,
     crawlDelay = 300,
     maxPages = 500,
+    includeSubdomains = true,
   } = req.body;
 
   if (!rootUrl) return res.status(400).json({ error: 'rootUrl is required' });
@@ -45,7 +46,7 @@ router.post('/sessions', (req, res) => {
   `).run(parsedUrl.href, maxDepth, maxConcurrent, requestTimeout, crawlDelay, maxPages);
 
   const sessionId = result.lastInsertRowid;
-  const config = { rootUrl: parsedUrl.href, maxDepth, maxConcurrent, requestTimeout, crawlDelay, maxPages };
+  const config = { rootUrl: parsedUrl.href, maxDepth, maxConcurrent, requestTimeout, crawlDelay, maxPages, includeSubdomains };
   const state = createCrawlState(sessionId, config);
 
   // Seed root URL
@@ -140,7 +141,7 @@ router.post('/sessions/:id/stop', (req, res) => {
 router.get('/sessions/:id/files', (req, res) => {
   const db = getDb();
   const {
-    category, extension, mime, minSize, maxSize,
+    category, extension, mime, minSize, maxSize, sourcePage,
     search, page = 1, limit = 50, sortBy = 'discovered_at', sortDir = 'DESC'
   } = req.query;
 
@@ -150,6 +151,7 @@ router.get('/sessions/:id/files', (req, res) => {
   if (category && category !== 'all') { conditions.push('category = ?'); params.push(category); }
   if (extension) { conditions.push('extension = ?'); params.push(extension.toLowerCase()); }
   if (mime) { conditions.push('mime_type LIKE ?'); params.push(`%${mime}%`); }
+  if (sourcePage) { conditions.push('source_page = ?'); params.push(sourcePage); }
   if (search) { conditions.push('(url LIKE ? OR file_name LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
   if (minSize) { conditions.push('content_length >= ?'); params.push(parseInt(minSize)); }
   if (maxSize) { conditions.push('content_length <= ?'); params.push(parseInt(maxSize)); }
@@ -164,6 +166,48 @@ router.get('/sessions/:id/files', (req, res) => {
   const files = db.prepare(`SELECT * FROM discovered_files WHERE ${where} ORDER BY ${safeSort} ${safeDir} LIMIT ? OFFSET ?`).all(...params, parseInt(limit), offset);
 
   res.json({ total, page: parseInt(page), limit: parseInt(limit), files });
+});
+
+// ============================================================
+// GET /api/sessions/:id/urls - List crawled/queued/visited URLs
+// type: queued (everything ever discovered) | crawled (HTML pages fetched)
+//       visited (anything actually fetched: crawled+file+error) | pending | file | error
+// Each row includes file_count = number of discovered_files whose
+// source_page is this URL, so the UI can drill into "files found on this page".
+// ============================================================
+router.get('/sessions/:id/urls', (req, res) => {
+  const db = getDb();
+  const { type = 'queued', search = '', page = 1, limit = 50 } = req.query;
+
+  const conditions = ['cu.session_id = ?'];
+  const params = [req.params.id];
+
+  if (type === 'crawled') conditions.push(`cu.status = 'crawled'`);
+  else if (type === 'visited') conditions.push(`cu.status IN ('crawled','file','error')`);
+  else if (type === 'pending') conditions.push(`cu.status = 'pending'`);
+  else if (type === 'file') conditions.push(`cu.status = 'file'`);
+  else if (type === 'error') conditions.push(`cu.status = 'error'`);
+  // type === 'queued' (default) -> no status filter, every URL ever queued
+
+  if (search) { conditions.push('cu.url LIKE ?'); params.push(`%${search}%`); }
+
+  const where = conditions.join(' AND ');
+  const limitN = Math.min(parseInt(limit) || 50, 200);
+  const pageN = Math.max(parseInt(page) || 1, 1);
+  const offset = (pageN - 1) * limitN;
+
+  const total = db.prepare(`SELECT COUNT(*) as cnt FROM crawled_urls cu WHERE ${where}`).get(...params).cnt;
+
+  const items = db.prepare(`
+    SELECT cu.id, cu.url, cu.status, cu.status_code, cu.depth, cu.source_page, cu.crawled_at, cu.error,
+      (SELECT COUNT(*) FROM discovered_files df WHERE df.session_id = cu.session_id AND df.source_page = cu.url) AS file_count
+    FROM crawled_urls cu
+    WHERE ${where}
+    ORDER BY cu.id ASC
+    LIMIT ? OFFSET ?
+  `).all(...params, limitN, offset);
+
+  res.json({ total, page: pageN, limit: limitN, items });
 });
 
 // ============================================================

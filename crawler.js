@@ -1,9 +1,63 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
+const puppeteer = require('puppeteer');
 const { parseStringPromise } = require('xml2js');
 const mime = require('mime-types');
 const { getDb } = require('./database');
 const { isFileUrl, getExtension, getCategory, getFileName, ALL_EXTENSIONS } = require('./fileTypes');
+
+// HTML pages are rendered with a real (headless) browser rather than fetched
+// with axios. Sites like Taobao serve a near-empty HTML shell from the server;
+// the actual product grid is built client-side after JS executes and the page
+// hydrates from API calls. A plain HTTP GET never sees that content — it only
+// ever sees the static template (header, nav, a few logo/icon assets), which
+// is why a pure-axios crawl can report hundreds of "pages crawled" while
+// finding almost no real files. One browser instance is shared across an
+// entire crawl run (launching headless Chrome per-page would be very slow);
+// each page load gets its own short-lived browser tab that is always closed.
+async function getBrowser(state) {
+  if (state.browser && state.browser.connected) return state.browser;
+  state.browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+  });
+  return state.browser;
+}
+
+async function closeBrowser(state) {
+  if (state.browser) {
+    try { await state.browser.close(); } catch {}
+    state.browser = null;
+  }
+}
+
+// Loads a URL in a fresh tab, waits for the SPA to hydrate, and returns the
+// fully rendered HTML plus response status. Always closes the tab, even on
+// error, so a long crawl doesn't leak Chrome tabs/memory over hundreds of pages.
+async function fetchRenderedHtml(url, state, timeout) {
+  const browser = await getBrowser(state);
+  const page = await browser.newPage();
+  try {
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    await page.setViewport({ width: 1366, height: 900 });
+
+    let statusCode = null;
+    const response = await page.goto(url, {
+      waitUntil: 'networkidle2', // wait until the SPA has mostly finished its API calls
+      timeout,
+    });
+    statusCode = response ? response.status() : null;
+
+    // Small extra settle time for lazy-rendered grids (infinite-scroll product
+    // lists often keep mutating the DOM for a moment after networkidle2 fires).
+    await new Promise(r => setTimeout(r, 800));
+
+    const html = await page.content();
+    return { html, statusCode };
+  } finally {
+    try { await page.close(); } catch {}
+  }
+}
 
 // Regex that finds absolute file-looking URLs anywhere in raw page text —
 // not just inside tag attributes. This is what catches images/video/docs that
@@ -35,6 +89,7 @@ function createCrawlState(sessionId, config) {
     speedSamples: [],
     lastSpeedCheck: Date.now(),
     lastSpeedCount: 0,
+    browser: null, // shared headless Chrome instance for this crawl run
   };
   crawlStates.set(sessionId, state);
   return state;
@@ -270,37 +325,24 @@ async function processUrl(url, depth, state, sourcePage) {
       return;
     }
 
-    // It's an HTML page, fetch it
-    const res = await axios.get(url, {
-      timeout: state.config.requestTimeout,
-      validateStatus: () => true,
-      maxRedirects: 5,
-      headers: { 'User-Agent': 'DomainFileCrawler/1.0 (+https://github.com/kehem-it)' },
-      responseType: 'text',
-    });
+    // It's an HTML page — render it in a real browser tab so client-side/SPA
+    // content (product grids, JS-hydrated image URLs, etc.) actually shows up.
+    const { html, statusCode } = await fetchRenderedHtml(url, state, state.config.requestTimeout);
 
     db.prepare(`UPDATE crawled_urls SET status='crawled', status_code=?, crawled_at=CURRENT_TIMESTAMP WHERE session_id=? AND url=?`)
-      .run(res.status, state.sessionId, url);
+      .run(statusCode, state.sessionId, url);
 
     state.pagesProcessed++;
 
-    const contentType = res.headers['content-type'] || '';
-    if (!contentType.includes('html') && !contentType.includes('xml')) {
-      // Could be a direct file served without file extension
-      const ext = getExtension(url);
-      if (ext) {
-        const category = getCategory(ext);
-        db.prepare(`INSERT OR IGNORE INTO discovered_files (session_id, url, file_name, category, extension, mime_type, content_length, source_page, status_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(state.sessionId, url, getFileName(url), category, ext, contentType.split(';')[0].trim(), null, sourcePage || null, res.status);
-        state.filesFound++;
-      }
+    if (!html) {
+      // Navigation failed or returned nothing renderable
       updateSessionStats(state);
       return;
     }
 
-    // Extract links from HTML
+    // Extract links from the rendered HTML
     if (depth < state.config.maxDepth && state.pagesProcessed < state.config.maxPages) {
-      const links = extractLinks(res.data, url);
+      const links = extractLinks(html, url);
       for (const link of links) {
         if (!link || link.startsWith('javascript:') || link.startsWith('mailto:') || link.startsWith('tel:')) continue;
         // File URLs (images, video, docs, etc.) are commonly hosted on a separate
@@ -399,6 +441,10 @@ async function runCrawler(sessionId) {
 
   // Drain any remaining in-flight requests
   if (inFlight.size > 0) await Promise.all(inFlight);
+
+  // Always tear down the shared browser instance once the run is done/stopped,
+  // so headless Chrome doesn't linger as an orphaned process between crawls.
+  await closeBrowser(state);
 
   if (!state.isStopped) {
     state.status = 'completed';

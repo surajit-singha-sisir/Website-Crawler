@@ -450,6 +450,14 @@
                         <input x-model.number="crawlForm.requestTimeout" type="number" min="1000" max="60000"
                             class="inp w-full" />
                     </div>
+                    <div class="col-span-2 flex items-center gap-2 pt-1">
+                        <input x-model="crawlForm.includeSubdomains" type="checkbox" id="includeSubdomains"
+                            class="w-4 h-4 rounded accent-indigo-500" />
+                        <label for="includeSubdomains" class="text-xs text-slate-400 cursor-pointer">
+                            Include subdomains (e.g. <span class="font-mono">item.example.com</span> when
+                            crawling <span class="font-mono">example.com</span>)
+                        </label>
+                    </div>
                 </div>
             </div>
 
@@ -823,6 +831,164 @@
         </div>
     </div>
 
+    <!-- ============================= URL EXPLORER MODAL ============================= -->
+    <div x-show="urlExplorer.show" x-cloak class="fixed inset-0 z-50 flex items-center justify-center modal-overlay
+        fade-in" @click.self="urlExplorer.show=false">
+        <div class="glass-card rounded-2xl w-full max-w-4xl mx-4 shadow-2xl max-h-[85vh] flex flex-col">
+            <div class="flex items-center justify-between p-5 border-b border-slate-700/50">
+                <div>
+                    <h2 class="text-base font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-list text-indigo-400"></i> <span x-text="urlExplorer.title"></span>
+                    </h2>
+                    <p class="text-xs text-slate-500 mt-0.5">
+                        <span x-text="urlExplorer.total"></span> URL<span x-show="urlExplorer.total!==1">s</span>
+                    </p>
+                </div>
+                <button @click="urlExplorer.show=false" class="text-slate-500 hover:text-white text-xl
+                    leading-none">&times;</button>
+            </div>
+
+            <div class="p-4 border-b border-slate-700/50">
+                <div class="relative">
+                    <i class="fa-solid fa-search text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 text-xs"></i>
+                    <input x-model="urlExplorer.search" @input.debounce.400ms="urlExplorer.page=1; loadUrlExplorer()"
+                        type="text" placeholder="Search URL…" class="inp pl-8 w-full text-xs py-2" />
+                </div>
+            </div>
+
+            <div class="flex-1 overflow-y-auto">
+                <table class="w-full text-xs">
+                    <thead class="sticky top-0 bg-slate-900/95 backdrop-blur z-10">
+                        <tr class="border-b border-slate-700/50 text-slate-500 text-left">
+                            <th class="px-4 py-2.5 w-8">#</th>
+                            <th class="px-4 py-2.5">URL</th>
+                            <th class="px-4 py-2.5 w-16">Depth</th>
+                            <th class="px-4 py-2.5 w-20">Status</th>
+                            <th class="px-4 py-2.5 w-16">Code</th>
+                            <th class="px-4 py-2.5 w-20">Files</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="(item, idx) in urlExplorer.items" :key="item.id">
+                            <tr class="tbl-row border-b border-slate-800/60">
+                                <td class="px-4 py-2.5 text-slate-600 font-mono"
+                                    x-text="(urlExplorer.page-1)*urlExplorer.limit + idx + 1"></td>
+                                <td class="px-4 py-2.5 max-w-md">
+                                    <div class="text-slate-300 truncate" :title="item.url" x-text="item.url"></div>
+                                    <div x-show="item.source_page" class="text-slate-600 truncate mt-0.5"
+                                        x-text="'from: ' + item.source_page"></div>
+                                    <div x-show="item.error" class="text-red-400/80 truncate mt-0.5"
+                                        x-text="item.error"></div>
+                                </td>
+                                <td class="px-4 py-2.5 text-slate-400 font-mono" x-text="item.depth"></td>
+                                <td class="px-4 py-2.5">
+                                    <span class="px-1.5 py-0.5 rounded text-xs" :class="statusBadgeClass(item.status)"
+                                        x-text="item.status"></span>
+                                </td>
+                                <td class="px-4 py-2.5 text-slate-400 font-mono" x-text="item.status_code || '—'"></td>
+                                <td class="px-4 py-2.5">
+                                    <button x-show="item.file_count > 0"
+                                        class="px-2 py-1 rounded-lg bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 transition-colors text-xs font-medium"
+                                        @click="showFilesForPage(item.url)">
+                                        <span x-text="item.file_count"></span> <i class="fa-solid fa-arrow-right ml-0.5 text-[10px]"></i>
+                                    </button>
+                                    <span x-show="!item.file_count" class="text-slate-700">—</span>
+                                </td>
+                            </tr>
+                        </template>
+                        <tr x-show="urlExplorer.items.length===0 && !urlExplorer.loading">
+                            <td colspan="6" class="text-center py-12 text-slate-600">
+                                <i class="fa-solid fa-magnifying-glass text-2xl mb-3 block opacity-30"></i>
+                                No URLs found
+                            </td>
+                        </tr>
+                        <tr x-show="urlExplorer.loading">
+                            <td colspan="6" class="text-center py-8 text-slate-600">
+                                <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Loading…
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="flex items-center justify-between px-4 py-3 border-t border-slate-700/50">
+                <span class="text-xs text-slate-500">
+                    Showing <span x-text="(urlExplorer.page-1)*urlExplorer.limit+1"></span>–<span
+                        x-text="Math.min(urlExplorer.page*urlExplorer.limit, urlExplorer.total)"></span> of
+                    <span x-text="urlExplorer.total"></span>
+                </span>
+                <div class="flex items-center gap-1">
+                    <button class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center
+                        justify-center text-sm disabled:opacity-40" :disabled="urlExplorer.page<=1"
+                        @click="urlExplorerGoPage(urlExplorer.page-1)">
+                        <i class="fa-solid fa-chevron-left text-xs"></i>
+                    </button>
+                    <template x-for="p in urlExplorerPageRange" :key="p">
+                        <button class="w-8 h-8 rounded-lg text-xs font-medium transition-colors"
+                            :class="urlExplorer.page===p ? 'bg-indigo-600 text-white'
+                            : 'bg-slate-800 hover:bg-slate-700 text-slate-400'"
+                            @click="urlExplorerGoPage(p)" x-text="p"></button>
+                    </template>
+                    <button class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center
+                        justify-center text-sm disabled:opacity-40" :disabled="urlExplorer.page>=urlExplorerTotalPages"
+                        @click="urlExplorerGoPage(urlExplorer.page+1)">
+                        <i class="fa-solid fa-chevron-right text-xs"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================= FILES-ON-PAGE MODAL (drill-down) ============================= -->
+    <div x-show="filesOnPage.show" x-cloak class="fixed inset-0 z-[60] flex items-center justify-center modal-overlay
+        fade-in" @click.self="filesOnPage.show=false">
+        <div class="glass-card rounded-2xl w-full max-w-2xl mx-4 shadow-2xl max-h-[80vh] flex flex-col">
+            <div class="flex items-center justify-between p-5 border-b border-slate-700/50">
+                <div class="min-w-0">
+                    <h2 class="text-base font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-file text-indigo-400"></i> Files Found on This Page
+                    </h2>
+                    <p class="text-xs text-slate-500 mt-0.5 truncate" :title="filesOnPage.pageUrl"
+                        x-text="filesOnPage.pageUrl"></p>
+                </div>
+                <button @click="filesOnPage.show=false" class="text-slate-500 hover:text-white text-xl
+                    leading-none shrink-0 ml-3">&times;</button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-3 space-y-1.5">
+                <template x-for="file in filesOnPage.files" :key="file.id">
+                    <div class="glass rounded-xl p-2.5 flex items-center gap-3 fade-in">
+                        <i :class="[categoryIcon(file.category), 'cat-'+file.category, 'text-sm shrink-0']"></i>
+                        <div class="min-w-0 flex-1">
+                            <div class="text-xs font-medium text-slate-200 truncate" x-text="file.file_name || '—'"></div>
+                            <div class="text-xs text-slate-600 truncate" x-text="file.url"></div>
+                        </div>
+                        <span class="text-xs text-slate-500 font-mono shrink-0" x-text="formatSize(file.content_length)"></span>
+                        <div class="flex items-center gap-1 shrink-0">
+                            <button class="w-7 h-7 rounded-lg bg-slate-800 hover:bg-indigo-600/30 flex items-center
+                                justify-center transition-colors" data-tooltip="Preview" @click="previewFile(file)">
+                                <i class="fa-solid fa-eye text-slate-400 text-xs"></i>
+                            </button>
+                            <a :href="file.url" target="_blank" rel="noopener" class="w-7 h-7 rounded-lg bg-slate-800
+                                hover:bg-indigo-600/30 flex items-center justify-center transition-colors"
+                                data-tooltip="Open">
+                                <i class="fa-solid fa-arrow-up-right-from-square text-slate-400 text-xs"></i>
+                            </a>
+                        </div>
+                    </div>
+                </template>
+                <div x-show="filesOnPage.files.length===0 && !filesOnPage.loading"
+                    class="text-center text-slate-600 py-10 text-sm">
+                    <i class="fa-solid fa-magnifying-glass text-2xl mb-3 block opacity-30"></i>
+                    No files found on this page
+                </div>
+                <div x-show="filesOnPage.loading" class="text-center text-slate-600 py-8 text-sm">
+                    <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Loading…
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- ============================= TOAST ============================= -->
     <div x-show="toast.show" x-cloak class="fixed bottom-5 right-5 z-50 fade-in">
         <div class="glass rounded-xl px-4 py-3 flex items-center gap-3 text-sm" :class="toast.type==='success'
@@ -870,9 +1036,9 @@
                     rootUrl: '',
                     maxDepth: 3,
                     maxPages: 500,
-                    maxConcurrent: 5,
+                    maxConcurrent: 3,
                     crawlDelay: 300,
-                    requestTimeout: 10000,
+                    requestTimeout: 20000,
                     includeSubdomains: true,
                 },
 

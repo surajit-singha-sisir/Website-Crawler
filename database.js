@@ -98,6 +98,14 @@ function initSchema() {
   db.run(`CREATE INDEX IF NOT EXISTS idx_discovered_files_session ON discovered_files(session_id)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_discovered_files_category ON discovered_files(category)`);
 
+  // Migration: tech_stack column for storing detected framework/library JSON
+  // against a session. Wrapped in try/catch since sql.js has no
+  // "ADD COLUMN IF NOT EXISTS" — this throws (harmlessly) on every boot after
+  // the first time the column already exists.
+  try {
+    db.run(`ALTER TABLE crawl_sessions ADD COLUMN tech_stack TEXT`);
+  } catch {}
+
   markDirty();
 }
 

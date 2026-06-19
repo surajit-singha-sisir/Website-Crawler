@@ -1,8 +1,11 @@
 const express = require('express');
 const router = express.Router();
+const archiver = require('archiver');
+const axios = require('axios');
 const { getDb } = require('./database');
 const { createCrawlState, getCrawlState, deleteCrawlState, runCrawler } = require('./crawler');
 const { getExtension, getCategory, getFileName } = require('./fileTypes');
+const { detectTechStack } = require('./techStack');
 
 // SSE clients for live updates
 const sseClients = new Map(); // sessionId -> Set of res objects
@@ -60,11 +63,28 @@ router.post('/sessions', (req, res) => {
     broadcast(sessionId, { type: 'status', status: state.status });
   }).catch(err => console.error('Crawler error:', err));
 
+  // Tech-stack detection runs independently of the crawl loop (it's a single
+  // request/render against the root URL only, not a per-page crawl step) so
+  // it doesn't compete with the crawl's own browser/concurrency budget and
+  // shows up quickly even on a long crawl.
+  detectTechStack(parsedUrl.href, requestTimeout).then((result) => {
+    db.prepare(`UPDATE crawl_sessions SET tech_stack = ? WHERE id = ?`)
+      .run(JSON.stringify(result), sessionId);
+    broadcast(sessionId, { type: 'techstack', techStack: result });
+  }).catch(err => console.error('Tech-stack detection error:', err));
+
   // Periodic stats broadcast
   const interval = setInterval(() => {
     const s = getCrawlState(sessionId);
     if (!s) { clearInterval(interval); return; }
     const session = db.prepare('SELECT * FROM crawl_sessions WHERE id=?').get(sessionId);
+    // tech_stack is stored as a raw JSON TEXT column — parse it before
+    // broadcasting, otherwise the client's periodic stats merge
+    // (`{...activeSession, ...session}`) clobbers the already-parsed
+    // tech_stack object with a plain string every second.
+    if (session && session.tech_stack) {
+      try { session.tech_stack = JSON.parse(session.tech_stack); } catch {}
+    }
     broadcast(sessionId, { type: 'stats', session });
     if (s.status === 'completed' || s.isStopped) clearInterval(interval);
   }, 1000);
@@ -88,6 +108,10 @@ router.get('/sessions/:id', (req, res) => {
   const db = getDb();
   const session = db.prepare('SELECT * FROM crawl_sessions WHERE id=?').get(req.params.id);
   if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  if (session.tech_stack) {
+    try { session.tech_stack = JSON.parse(session.tech_stack); } catch { /* leave as raw string */ }
+  }
 
   const state = getCrawlState(parseInt(req.params.id));
   const activeRequests = state ? state.activeRequests : 0;
@@ -252,6 +276,111 @@ router.get('/sessions/:id/export', (req, res) => {
 });
 
 // ============================================================
+// GET /api/sessions/:id/export-zip - Download actual files, zipped
+// Streams a zip of the real file bytes (not just metadata) for whatever
+// filter is currently applied. Downloads happen with bounded concurrency so
+// we don't open hundreds of sockets at once or buffer entire large files in
+// memory — each file is piped straight from its HTTP response into the zip
+// archive's compression stream.
+// ============================================================
+router.get('/sessions/:id/export-zip', async (req, res) => {
+  const db = getDb();
+  const { category, extension, search } = req.query;
+
+  const conditions = ['session_id = ?'];
+  const params = [req.params.id];
+  if (category && category !== 'all') { conditions.push('category = ?'); params.push(category); }
+  if (extension) { conditions.push('extension = ?'); params.push(extension.toLowerCase()); }
+  if (search) { conditions.push('(url LIKE ? OR file_name LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
+
+  const files = db.prepare(`SELECT * FROM discovered_files WHERE ${conditions.join(' AND ')} ORDER BY category, file_name`).all(...params);
+
+  if (files.length === 0) {
+    return res.status(404).json({ error: 'No files match this filter' });
+  }
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="crawl-${req.params.id}-files.zip"`);
+
+  const archive = archiver('zip', { zlib: { level: 6 } });
+  archive.on('warning', (err) => console.warn('Zip export warning:', err.message));
+  archive.on('error', (err) => {
+    console.error('Zip export error:', err);
+    try { res.end(); } catch {}
+  });
+  archive.pipe(res);
+
+  // Track basenames so two different files that happen to share a filename
+  // (within the same category) don't collide inside the zip.
+  const usedNames = new Map();
+
+  function reserveZipPath(file) {
+    const category = file.category || 'other';
+    const rawName = file.file_name || `file-${file.id}`;
+    const key = `${category}/${rawName}`;
+    const count = usedNames.get(key) || 0;
+    usedNames.set(key, count + 1);
+    if (count === 0) return key;
+    const dot = rawName.lastIndexOf('.');
+    const base = dot > -1 ? rawName.slice(0, dot) : rawName;
+    const ext = dot > -1 ? rawName.slice(dot) : '';
+    return `${category}/${base} (${count})${ext}`;
+  }
+
+  // Waits until archiver has fully consumed a given stream entry before
+  // resolving, so our concurrency limiter below provides real backpressure
+  // instead of just queuing every download into archiver's internal buffer
+  // at once.
+  function appendAndWait(stream, zipPath) {
+    return new Promise((resolve) => {
+      const onEntry = (entryData) => {
+        if (entryData.name === zipPath) {
+          archive.off('entry', onEntry);
+          resolve();
+        }
+      };
+      archive.on('entry', onEntry);
+      archive.append(stream, { name: zipPath });
+    });
+  }
+
+  const MAX_FILE_BYTES = 300 * 1024 * 1024; // 300MB safety cap per file
+  const MAX_CONCURRENT_DOWNLOADS = 4;
+  const queue = [...files];
+
+  async function worker() {
+    while (queue.length > 0 && !res.destroyed) {
+      const file = queue.shift();
+      if (!file) continue;
+      const zipPath = reserveZipPath(file);
+      try {
+        const response = await axios.get(file.url, {
+          responseType: 'stream',
+          timeout: 30000,
+          maxContentLength: MAX_FILE_BYTES,
+          validateStatus: (s) => s === 200,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          },
+        });
+        await appendAndWait(response.data, zipPath);
+      } catch (err) {
+        archive.append(`Failed to download: ${file.url}\nReason: ${err.message}`, { name: `${zipPath}.error.txt` });
+      }
+    }
+  }
+
+  try {
+    const workerCount = Math.min(MAX_CONCURRENT_DOWNLOADS, files.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    await archive.finalize();
+  } catch (err) {
+    console.error('Zip export failed:', err);
+    try { res.end(); } catch {}
+  }
+});
+
+// ============================================================
 // GET /api/sessions/:id/stats - Category breakdown
 // ============================================================
 router.get('/sessions/:id/stats', (req, res) => {
@@ -280,6 +409,9 @@ router.get('/sessions/:id/events', (req, res) => {
   // Send current state immediately
   const db = getDb();
   const session = db.prepare('SELECT * FROM crawl_sessions WHERE id=?').get(sessionId);
+  if (session && session.tech_stack) {
+    try { session.tech_stack = JSON.parse(session.tech_stack); } catch {}
+  }
   if (session) res.write(`data: ${JSON.stringify({ type: 'stats', session })}\n\n`);
 
   req.on('close', () => {

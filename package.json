@@ -8,6 +8,7 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
+    "archiver": "^8.0.0",
     "axios": "^1.6.0",
     "bottleneck": "^2.19.5",
     "cheerio": "^1.0.0-rc.12",

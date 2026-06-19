@@ -259,7 +259,12 @@ async function processUrl(url, depth, state) {
       const links = extractLinks(res.data, url);
       for (const link of links) {
         if (!link || link.startsWith('javascript:') || link.startsWith('mailto:') || link.startsWith('tel:')) continue;
-        if (!isSameDomain(link, rootHostname)) continue;
+        // File URLs (images, video, docs, etc.) are commonly hosted on a separate
+        // CDN domain (e.g. taobao.com pages reference img.alicdn.com assets).
+        // Only restrict *page* crawling to the root domain; let file URLs through
+        // regardless of host so they actually get discovered.
+        const linkIsFile = isFileUrl(link);
+        if (!linkIsFile && !isSameDomain(link, rootHostname)) continue;
         if (state.visitedUrls.has(link) || state.queuedUrls.has(link)) continue;
 
         state.queuedUrls.add(link);

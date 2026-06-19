@@ -534,10 +534,14 @@
             <!-- Stats cards -->
             <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                 <template x-for="card in statsCards" :key="card.label">
-                    <div class="glass-card rounded-xl p-4 fade-in">
+                    <div class="glass-card rounded-xl p-4 fade-in transition-colors"
+                        :class="card.type ? 'cursor-pointer hover:border-indigo-500/40 hover:bg-slate-800/40' : ''"
+                        :data-tooltip="card.type ? 'Click to view details' : null"
+                        @click="card.type && openUrlExplorer(card.type)">
                         <div class="flex items-center gap-2 mb-2">
                             <i :class="[card.icon, card.color, 'text-sm' ]"></i>
                             <span class="text-xs text-slate-500" x-text="card.label"></span>
+                            <i x-show="card.type" class="fa-solid fa-arrow-up-right-from-square text-slate-600 text-[10px] ml-auto"></i>
                         </div>
                         <div class="text-xl font-bold text-white" x-text="card.value"></div>
                     </div>
@@ -1001,6 +1005,68 @@
                         counts.all += row.count;
                     }
                     this.categoryCounts = counts;
+                },
+
+                // ---------------- URL Explorer (Pages Crawled / URLs Queued / URLs Visited) ----------------
+                openUrlExplorer(type) {
+                    if (!this.activeSession) return;
+                    const titles = { crawled: 'Pages Crawled', queued: 'URLs Queued', visited: 'URLs Visited' };
+                    this.urlExplorer = {
+                        show: true, type, title: titles[type] || 'URLs',
+                        items: [], total: 0, page: 1, limit: 50, search: '', loading: false,
+                    };
+                    this.loadUrlExplorer();
+                },
+
+                async loadUrlExplorer() {
+                    if (!this.activeSession) return;
+                    this.urlExplorer.loading = true;
+                    try {
+                        const params = new URLSearchParams({
+                            type: this.urlExplorer.type,
+                            search: this.urlExplorer.search,
+                            page: this.urlExplorer.page,
+                            limit: this.urlExplorer.limit,
+                        });
+                        const res = await fetch(`/api/sessions/${this.activeSession.id}/urls?${params}`);
+                        const data = await res.json();
+                        this.urlExplorer.items = data.items || [];
+                        this.urlExplorer.total = data.total || 0;
+                    } catch {
+                        this.urlExplorer.items = [];
+                    } finally {
+                        this.urlExplorer.loading = false;
+                    }
+                },
+
+                urlExplorerGoPage(p) {
+                    this.urlExplorer.page = p;
+                    this.loadUrlExplorer();
+                },
+
+                async showFilesForPage(url) {
+                    if (!this.activeSession) return;
+                    this.filesOnPage = { show: true, pageUrl: url, files: [], loading: true };
+                    try {
+                        const params = new URLSearchParams({ sourcePage: url, limit: 200, sortBy: 'file_name', sortDir: 'ASC' });
+                        const res = await fetch(`/api/sessions/${this.activeSession.id}/files?${params}`);
+                        const data = await res.json();
+                        this.filesOnPage.files = data.files || [];
+                    } catch {
+                        this.filesOnPage.files = [];
+                    } finally {
+                        this.filesOnPage.loading = false;
+                    }
+                },
+
+                statusBadgeClass(status) {
+                    const map = {
+                        crawled: 'bg-emerald-900/40 text-emerald-400',
+                        file: 'bg-blue-900/40 text-blue-400',
+                        pending: 'bg-slate-800 text-slate-400',
+                        error: 'bg-red-900/40 text-red-400',
+                    };
+                    return map[status] || 'bg-slate-800 text-slate-400';
                 },
 
                 subscribeSSE(sessionId) {
